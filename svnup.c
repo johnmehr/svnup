@@ -37,13 +37,13 @@
 #include <openssl/ssl.h>
 #include <openssl/ssl3.h>
 #include <openssl/err.h>
+#include <openssl/md5.h>
 
 #include <ctype.h>
 #include <dirent.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <md5.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,6 +107,7 @@ struct tree_node {
 
 /* Function Prototypes */
 
+static char		*md5sum(void*, size_t, char*);
 static int		 tree_node_compare(const struct tree_node *, const struct tree_node *);
 static void		 prune(connector *, char *);
 static char		*find_response_end(int, char *, char *);
@@ -133,6 +134,29 @@ static void		 parse_additional_attributes(connector *, char *, char *, file_node
 static void		 get_files(connector *, char *, char *, file_node **, int, int);
 static void		 progress_indicator(connector *connection, char *, int, int);
 static void		 usage(char *);
+
+/*
+ * md5sum
+ *
+ * Function that returns hexadecimal md5 hash in out.
+ * out needs to be char[MD5_DIGEST_LENGTH*2+1].
+ */
+static char*
+md5sum(void *data, size_t dlen, char *out)
+{
+	MD5_CTX       md5_context;
+	unsigned char md5_digest[MD5_DIGEST_LENGTH];
+	size_t i, j;
+
+	MD5_Init(&md5_context);
+	MD5_Update(&md5_context, data, dlen);
+	MD5_Final(md5_digest, &md5_context);
+
+	for (i = 0, j = 0; i < MD5_DIGEST_LENGTH; i++, j+=2)
+		sprintf(out+j, "%02x", md5_digest[i]);
+
+	return out;
+}
 
 /*
  * tree_node_compare
@@ -938,11 +962,11 @@ parse_response_item(connector *connection, char *end, int *count, char **item_st
 static int
 confirm_md5(char *md5, char *file_path_target)
 {
-	MD5_CTX     md5_context;
 	struct stat file;
 	int         fd, mismatch;
 	size_t      temp_size, link_size;
-	char       *buffer, *eol, *link, *md5_check, *start, *value;
+	char       *buffer, *eol, *link, *start, *value;
+	char        md5_check[33];
 
 	mismatch = 1;
 
@@ -958,11 +982,7 @@ confirm_md5(char *md5, char *file_path_target)
 			snprintf(link, 6, "link  ");
 			readlink(file_path_target, link + 5, link_size - 5);
 
-			MD5Init(&md5_context);
-			MD5Update(&md5_context, link, strlen(link));
-			md5_check = MD5End(&md5_context, NULL);
-			mismatch = strncmp(md5, md5_check, 33);
-			free(md5_check);
+			mismatch = strncmp(md5, md5sum(link, strlen(link), md5_check), 33);
 			free(link);
 		} else {
 			/* Load the file into memory. */
@@ -985,11 +1005,7 @@ confirm_md5(char *md5, char *file_path_target)
 			/* Continue removing revision tags while the MD5 sums do not match. */
 
 			while ((mismatch) && (start)) {
-				MD5Init(&md5_context);
-				MD5Update(&md5_context, buffer, temp_size);
-				md5_check = MD5End(&md5_context, NULL);
-				mismatch = strncmp(md5, md5_check, 33);
-				free(md5_check);
+				mismatch = strncmp(md5, md5sum(buffer, temp_size, md5_check), 33);
 
 				start = strstr(start, "$FreeBSD:");
 
@@ -1789,10 +1805,10 @@ parse_additional_attributes(connector *connection, char *start, char *end, file_
 static void
 get_files(connector *connection, char *command, char *path_target, file_node **file, int file_start, int file_end)
 {
-	MD5_CTX md5_context;
 	int     try, x, block_size, block_size_markers, file_block_remainder;
 	int     first_response, last_response, offset, position, raw_size, saved;
-	char   *begin, *end, file_path_target[BUFFER_UNIT], *gap, *md5_check, *start, *temp_end;
+	char   *begin, *end, file_path_target[BUFFER_UNIT], *gap, *start, *temp_end;
+	char    md5_check[33];
 
 	/* Calculate the number of bytes the server is going to send back. */
 
@@ -1901,16 +1917,12 @@ get_files(connector *connection, char *command, char *path_target, file_node **f
 		 * matches what the svn server originally reported.
 		 */
 
-		MD5Init(&md5_context);
-		MD5Update(&md5_context, begin, file[x]->size);
-		md5_check = MD5End(&md5_context, NULL);
-
 		if (connection->verbosity > 1)
 			printf("\r\e[0K\r");
 
 		/* Make sure the MD5 checksums match before saving the file. */
 
-		if (strncmp(file[x]->md5, md5_check, 33) != 0) {
+		if (strncmp(file[x]->md5, md5sum(begin, file[x]->size, md5_check), 33) != 0) {
 			begin[file[x]->size] = '\0';
 			errx(EXIT_FAILURE, "MD5 checksum mismatch: should be %s, calculated %s\n", file[x]->md5, md5_check);
 		}
@@ -1927,9 +1939,6 @@ get_files(connector *connection, char *command, char *path_target, file_node **f
 
 		position -= file[x]->raw_size;
 		bzero(connection->response + position, file[x]->raw_size);
-
-		if (md5_check)
-			free(md5_check);
 	}
 }
 
