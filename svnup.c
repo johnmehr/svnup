@@ -27,6 +27,8 @@
  *
  */
 
+#define OPENSSL_API_COMPAT 0x10100000L
+
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -55,7 +57,6 @@
 #define BUFFER_UNIT 4096
 #define COMMAND_BUFFER 32768
 #define COMMAND_BUFFER_THRESHOLD 32000
-
 
 typedef struct {
 	int       socket_descriptor;
@@ -979,7 +980,7 @@ confirm_md5(char *md5, char *file_path_target)
 				err(EXIT_FAILURE, "confirm_md5 link malloc");
 
 			bzero(link, link_size);
-			snprintf(link, 6, "link  ");
+			snprintf(link, 7, "link  ");
 			readlink(file_path_target, link + 5, link_size - 5);
 
 			mismatch = strncmp(md5, md5sum(link, strlen(link), md5_check), 33);
